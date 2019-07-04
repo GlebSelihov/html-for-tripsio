@@ -1,0 +1,279 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta http-equiv="X-UA-Compatible" content="ie=edge" />
+    <meta name="viewport" content="initial-scale=1.0, maximum-scale=1.0" />
+    <title>Document</title>
+    <link
+      rel="stylesheet"
+      href="https://cdnjs.cloudflare.com/ajax/libs/quill/1.3.6/quill.snow.min.css"
+    />
+    <style>
+      html,
+      body {
+        overflow: hidden;
+      }
+
+      #editor-container {
+        border: none;
+      }
+
+      .ql-editor {
+        padding-top: 5px;
+      }
+
+      .ql-editor.ql-blank::before {
+        color: rgba(0, 0, 0, 0.6);
+        content: attr(data-placeholder);
+        font-style: normal;
+        left: 15px;
+        pointer-events: none;
+        position: absolute;
+        right: 15px;
+        font-size: 15px;
+      }
+    </style>
+  </head>
+
+  <body>
+    <div id="editor-container"></div>
+  </body>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/quill/1.3.6/quill.min.js"></script>
+
+  <script>
+    let userMode = false;
+
+    document.addEventListener('message', e => {
+      listener(e);
+    });
+
+    document.addEventListener('build', listener);
+
+    const quill = new Quill('#editor-container', {
+      placeholder: 'Share your travels!',
+      modules: {
+        toolbar: false,
+      },
+      theme: 'snow', // or 'bubble'
+    });
+
+    const sendMessage = msg => {
+      const message = JSON.stringify(msg);
+      if (document.hasOwnProperty('postMessage')) {
+        document.postMessage(message, '*');
+      } else if (window.hasOwnProperty('postMessage')) {
+        window.postMessage(message, '*');
+      }
+    };
+
+    quill.on('selection-change', function(range, oldRange, source) {
+      if (range) {
+        const message = { data: 'SET_INDEX', index: range.index };
+        sendMessage(message);
+      }
+    });
+
+    quill.on('text-change', function(delta, oldDelta, source) {
+      const { index } = quill.getSelection();
+      const indexMessage = { data: 'SET_INDEX', index };
+      sendMessage(indexMessage);
+      if (userMode) {
+        const message = { data: 'FETCH_MENTIONS', search: delta.ops };
+        sendMessage(message);
+      }
+    });
+
+    function listener(event) {
+      const message = JSON.parse(event.data);
+      const { index, length } = quill.getSelection();
+      const format = quill.getFormat(index, length);
+      const selectedText = quill.getText(index, length);
+      let delta;
+
+      switch (message.type) {
+        case 'list':
+          {
+            quill.formatLine(index, length, 'list', 'bullets');
+          }
+          break;
+        case 'img':
+          {
+            quill.insertEmbed(index, 'custom-image', message.data);
+          }
+          break;
+        case 'blur':
+          {
+            quill.root.blur();
+          }
+          break;
+        case 'bold':
+          {
+            if (format.bold) {
+              quill.formatText(index, length, 'bold', false);
+            } else {
+              quill.formatText(index, length, 'bold', true);
+            }
+          }
+          break;
+        case 'italic':
+          {
+            if (format.italic) {
+              quill.formatText(index, length, 'italic', false);
+            } else {
+              quill.formatText(index, length, 'italic', true);
+            }
+          }
+          break;
+        case 'h1':
+          {
+            if (format.header && format.header == 1) {
+              quill.formatLine(index, length, 'header', false);
+            } else {
+              quill.formatLine(index, length, 'header', 1);
+            }
+          }
+          break;
+        case 'h2':
+          {
+            if (format.header && format.header == 2) {
+              quill.formatLine(index, length, 'header', false);
+            } else {
+              quill.formatLine(index, length, 'header', 2);
+            }
+          }
+          break;
+        case 'link':
+          {
+            if (index !== 0) {
+              delta = {
+                ops: [
+                  { retain: index },
+                  { insert: selectedText, attributes: { link: selectedText } },
+                ],
+              };
+            } else {
+              delta = {
+                ops: [{ insert: selectedText, attributes: { link: selectedText } }],
+              };
+            }
+
+            quill.deleteText(index, length);
+            quill.updateContents(delta);
+          }
+          break;
+        case 'user':
+          {
+            const prevSymb = quill.getText(index - 1, 1);
+            if (prevSymb !== '@') {
+              if (index !== 0) {
+                delta = {
+                  ops: [{ retain: index }, { insert: '@' }],
+                };
+              } else {
+                delta = {
+                  ops: [{ insert: '@' }],
+                };
+              }
+              quill.updateContents(delta);
+              quill.setSelection(index + 1, length);
+
+              userMode = true;
+
+              const message = { data: 'INSERT_USER_MODE_ON' };
+              sendMessage(message);
+            }
+          }
+          break;
+        case 'hr':
+          {
+            customHrHandler();
+            quill.setSelection(index + 1, length);
+            const message = quill.getSelection();
+            sendMessage(message);
+          }
+          break;
+        case 'insertUser':
+          {
+            message.data += ' ';
+            delta = {
+              ops: [{ retain: index }, { insert: message.data }],
+            };
+            quill.updateContents(delta);
+            quill.setSelection(index + message.data.length, length);
+            // const message = { data: 'INSERT_USER_MODE_OFF' };
+            // sendMessage(message);
+          }
+          break;
+      }
+    }
+
+    var Embed = Quill.import('blots/block/embed');
+
+    class Hr extends Embed {
+      static create(value) {
+        let node = super.create(value);
+        // give it some margin
+        node.setAttribute('style', 'height:0px; margin-top:10px; margin-bottom:10px;');
+        return node;
+      }
+    }
+
+    Hr.blotName = 'hr'; //now you can use .ql-hr classname in your toolbar
+    Hr.className = 'my-hr';
+    Hr.tagName = 'hr';
+
+    class CustomImage extends Embed {
+      static create(url) {
+        let figure = document.createElement('figure');
+        let img = document.createElement('img');
+
+        img.setAttribute('src', url);
+        figure.appendChild(img);
+        return figure;
+      }
+
+      static value(domNode) {
+        return domNode.querySelector('img').getAttribute('src');
+      }
+    }
+
+    CustomImage.blotName = 'custom-image'; //now you can use .ql-hr classname in your toolbar
+    CustomImage.className = 'medium-insert-images';
+    CustomImage.tagName = 'div';
+
+    class CustomPlace extends Embed {
+      static create(place) {
+        let span = document.createElement('span');
+
+        span.innerHTML = place;
+
+        return span;
+      }
+
+      static value(domNode) {
+        return domNode.querySelector('span').innerHTML;
+      }
+    }
+
+    CustomPlace.blotName = 'custom-place'; //now you can use .ql-hr classname in your toolbar
+    CustomPlace.className = 'custom-place';
+    CustomPlace.tagName = 'div';
+
+    var customHrHandler = function() {
+      // get the position of the cursor
+      var range = quill.getSelection();
+      if (range) {
+        // insert the <hr> where the cursor is
+        quill.insertEmbed(range.index, 'hr', 'null');
+      }
+    };
+
+    Quill.register({
+      'formats/hr': Hr,
+      'formats/custom-image': CustomImage,
+      'formats/custom-place': CustomPlace,
+    });
+  </script>
+</html>
